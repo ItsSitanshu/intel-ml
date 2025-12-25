@@ -6,7 +6,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 add_executable(intel-ml)
 
 target_sources(intel-ml 
-  PRIVATE src/main.cxx
+  PRIVATE src/main.cpp
 )
 
 target_include_directories(intel-ml
