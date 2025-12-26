@@ -2,11 +2,16 @@
 #include <tensor.hpp>
 
 int main() {
-	NTensor<int> tensor({3, 2, 2}, 0, NTensorConfig{0});
 
-	tensor.index({0, 0, 1}) = 1;
-	tensor.index({0, 1, 1}) = 1;
+	size_t N = 4;
+	NTensor<float> tensor({N, N}, 0, NTensorConfig{0});
 
+	for (size_t i = 0; i < N; i++) {
+    	for (size_t j = 0; j < N; j++)
+    		tensor.index({i, j}) = (float)(2.125 * (i + j) + (i/ (j + 1)));
+	}
+
+    tensor.print_flat();
 
 	return 0;
 }

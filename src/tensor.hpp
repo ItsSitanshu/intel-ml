@@ -65,6 +65,92 @@ public:
         return data_[flat_pos];
     }
 
+    NTensor operator+(const NTensor& t) {
+        check_size_eq(t);
+
+        NTensor<T> out(shape_, 0, config_);
+
+        for (size_t i = 0; i < size_; i++) {
+            out.data_[i] = data_[i] + t.data_[i];
+        }
+
+        return out;
+    }
+
+    NTensor operator-(const NTensor& t) {
+        check_size_eq(t);
+
+        NTensor<T> out(shape_, 0, config_);
+
+        for (size_t i = 0; i < size_; i++) {
+            out.data_[i] = data_[i] - t.data_[i];
+        }
+
+        return out;
+    }
+    
+    NTensor operator*(T scalar) {
+        NTensor<T> out(shape_);
+
+        for (size_t i = 0; i < size_; i++) {
+            out.data_[i] = data_[i] * scalar;
+        }
+
+        return out;
+    }
+
+    NTensor flatten() {
+        NTensor<T> out({1, size_});
+        out.data_ = data_;
+        
+        return out;
+    }
+
+    T sum() { 
+        T out;
+        for (size_t i = 0; i < size_; i++) {
+            out += data_[i];
+        }
+        return out;
+    }
+
+    T mean() {
+        T out = (T)(sum() / size_);
+        return out;
+    }
+
+    T median() {  };
+
+    T min() {
+        T out = data_[0];
+
+        for (size_t i = 1; i < size_; i++) {
+            out = (data_[i] < out) ? data_[i] : out;
+        }
+
+        return out;
+    }  
+    
+    T max() {
+        T out = data_[0];
+
+        for (size_t i = 1; i < size_; i++) {
+            out = (data_[i] > out) ? data_[i] : out;
+        }
+
+        return out;
+    }
+
+    void print_flat() {
+        std::cout << "NTensor[size=" << size_ << ", data=";
+        for (size_t i = 0; i < size_; i++) {
+            std::cout << data_[i];
+            if (i != size_) std::cout << ", "; 
+        }
+        std::cout << "]" << std::endl;
+     
+    }
+
     T* data() { return data_.data(); }
     const size_t* shape() { return shape_.data(); };
     size_t ndim() { return ndim_; };
@@ -92,6 +178,25 @@ private:
             stride_[i] = shape_[i + 1] * stride_[i + 1];
     }
 
+    void check_size_eq(const NTensor& t) {
+        if (shape_ != t.shape_) {
+            std::ostringstream oss;
+            oss << "Cannot operate on tensors: shapes differ. "
+                << "LHS shape=[";
+            for (size_t i = 0; i < shape_.size(); ++i) {
+                oss << shape_[i];
+                if (i + 1 < shape_.size()) oss << ", ";
+            }
+            oss << "] RHS shape=[";
+            for (size_t i = 0; i < t.shape_.size(); ++i) {
+                oss << t.shape_[i];
+                if (i + 1 < t.shape_.size()) oss << ", ";
+            }
+            oss << "]";
+
+            throw std::runtime_error(oss.str());
+        }
+    }     
 };
 
 
