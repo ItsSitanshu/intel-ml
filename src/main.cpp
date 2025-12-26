@@ -13,5 +13,9 @@ int main() {
 
     tensor.print_flat();
 
+    VTensor<float> view = tensor.slice(0, 2, 0, 2);
+
+    view.print_flat();
+
 	return 0;
 }

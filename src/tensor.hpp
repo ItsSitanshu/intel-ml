@@ -11,6 +11,42 @@ typedef struct NTensorConfig {
 	size_t strassen_threshold = 48;
 } NTensorConfig;
 
+template<typename T>
+class VTensor {
+public:
+    T* data_;
+    const size_t* shape_;
+    const size_t* stride_;
+    size_t size_;
+    size_t ndim_;
+
+    T& index(size_t i, size_t j) {
+        return data_[i * stride_[0] + j * stride_[1]];
+    }
+
+    void print_flat() {
+        if (ndim_ == 2) {
+            std::cout << "VTensor[";
+            for (size_t i = 0; i < shape_[0]; ++i) {
+                for (size_t j = 0; j < shape_[1]; ++j) {
+                    std::cout << data_[i * stride_[0] + j * stride_[1]];
+                    if (i != shape_[0]-1 || j != shape_[1]-1) std::cout << ", ";
+                }
+            }
+            std::cout << "]" << std::endl;
+        } else {
+            // fallback for 1D
+            std::cout << "VTensor[";
+            for (size_t i = 0; i < size_; ++i) {
+                std::cout << data_[i];
+                if (i != size_-1) std::cout << ", ";
+            }
+            std::cout << "]" << std::endl;
+        }
+    }
+
+};
+
 template<typename T = float>
 class NTensor {
 public:
@@ -54,7 +90,7 @@ public:
 
         for (size_t p : pos) {
             flat_pos += p * stride_[i];
-        ++i;
+            ++i;
         }
 
         if (flat_pos >= size_) {
@@ -65,7 +101,29 @@ public:
         return data_[flat_pos];
     }
 
-    NTensor operator+(const NTensor& t) {
+    VTensor<T> slice(size_t a, size_t b, size_t c, size_t d) {
+        if (ndim_ > 2) {
+            throw std::runtime_error("Splitting not supported for tensors > 2D");
+        }
+
+        VTensor<T> out;
+
+        size_t rows = b - a;
+        size_t cols = d - c;
+
+        out.data_ = data_.data() + a * stride_[0] + c * stride_[1];
+        out.size_ = rows * cols;
+
+        // Allocate new stride array for the view
+        out.stride_ = new size_t[2]{ stride_[0], stride_[1] };
+        out.shape_  = new size_t[2]{ rows, cols };
+        out.ndim_ = 2;
+
+        return out;
+    }
+
+
+    NTensor add(const NTensor& t) {
         check_size_eq(t);
 
         NTensor<T> out(shape_, 0, config_);
@@ -77,7 +135,7 @@ public:
         return out;
     }
 
-    NTensor operator-(const NTensor& t) {
+    NTensor sub(const NTensor& t) {
         check_size_eq(t);
 
         NTensor<T> out(shape_, 0, config_);
@@ -89,7 +147,7 @@ public:
         return out;
     }
     
-    NTensor operator*(T scalar) {
+    NTensor scalar_mult(T scalar) {
         NTensor<T> out(shape_);
 
         for (size_t i = 0; i < size_; i++) {
@@ -197,16 +255,6 @@ private:
             throw std::runtime_error(oss.str());
         }
     }     
-};
-
-
-template<typename T = float>
-class VTensor {
-private:
-	T* data_;
-	const size_t* shape_;
-	const size_t* stride_;
-	size_t ndim_;
 };
 
 #endif // TENSOR_HPP
