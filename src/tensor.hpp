@@ -8,7 +8,7 @@
 #include <memory>
 
 typedef struct NTensorConfig {
-	size_t strassen_threshold = 2;
+	size_t strassen_threshold;
 } NTensorConfig;
 
 template<typename T = float>
@@ -128,9 +128,9 @@ public:
     NTensor add(const NTensor& t) {
         check_size_eq(t);
 
-        NTensor<T> out({shape_}, (T)0, config_);
+        NTensor<T> out(shape_, (T)0, config_);
 
-        for (size_t i = 0; i < size_; i++) {
+        for (size_t i = 0; i < size_; ++i) {
             out.data_[i] = data_[i] + t.data_[i];
         }
 
@@ -138,9 +138,14 @@ public:
     }
 
     void add(VTensor<T>& a, VTensor<T>& b) {
-        for (size_t i = 0; i < shape_[0]; i++)
-            for (size_t j = 0; j < shape_[1]; i++)
-                data_[i] = a.index(i, j) + b.index(i, j);
+        for (size_t i = 0; i < shape_[0]; ++i) {
+            for (size_t j = 0; j < shape_[1]; ++j) {
+                // _log::log_message(_log::DEBUG, "%zu, %zu", i, j); 
+                index({i, j}) = a.index(i, j) + b.index(i, j);
+            }
+        }
+
+        // _log::log_message(_log::DEBUG, "shape = {%zu, %zu}", shape_[0], shape_[1]); 
     }
 
     NTensor sub(NTensor& t) {
@@ -148,7 +153,7 @@ public:
 
         NTensor<T> out(shape_, 0, config_);
 
-        for (size_t i = 0; i < size_; i++) {
+        for (size_t i = 0; i < size_; ++i) {
             out.data_[i] = data_[i] - t.data_[i];
         }
 
@@ -156,26 +161,25 @@ public:
     }
 
     void sub(VTensor<T>& a, VTensor<T>& b) {
-        for (size_t i = 0; i < shape_[0]; i++)
-            for (size_t j = 0; j < shape_[1]; i++) 
+        for (size_t i = 0; i < shape_[0]; ++i) {
+            for (size_t j = 0; j < shape_[1]; ++j) {
+                // _log::log_message(_log::DEBUG, "%zu, %zu", i, j); 
                 index({i, j}) = a.index(i, j) - b.index(i, j);
+            }
+        }
     }
 
     void eq(VTensor<T>& view) {
-        size_t ii, jj = 0;
-
-        for (size_t i = 0; i < view.shape_[0]; ++i) {
-            for (size_t j = 0; j < view.shape_[1]; ++j) {
-                index({ii, jj}) = view.index(i, j);
-                ++jj;
+        for (size_t i = 0; i < shape_[0]; ++i) {
+            for (size_t j = 0; j < shape_[1]; ++j) {
+                index({i, j}) = view.index(i, j);
             }
-            ++ii;
         }
     }    
 
     void matmul(T scalar) {
         T p = (T)0;
-        for (size_t i = 0; i < size_; i++) {
+        for (size_t i = 0; i < size_; ++i) {
             p = data_[i];
             data_[i] = p * scalar;
         }
@@ -196,12 +200,12 @@ public:
     }  
 
     NTensor<T> static_matmul(NTensor<T> t) {    
-        const size_t* mat_shape_2 = t.shape();
-
         size_t rows = shape_[1];
-        size_t cols = mat_shape_2[0];
+        size_t cols = t.shape_[0];
+        _log::log_message(_log::DEBUG, "%zu, %zu", rows, cols);
 
-        NTensor<T> out = NTensor({cols, rows}, (T)0, config_);
+        NTensor<T> out = NTensor({rows, cols}, (T)0, config_);
+
 
         for (size_t row = 0; row < rows; row++) {
             size_t col_off = cols * row;
@@ -209,10 +213,13 @@ public:
                 T val = 0;
 
                 for (size_t i = 0; i < shape_[0]; i++) {
+                    // std::cout << "out(" << col << "," << row << ") += cur(" << col << "," << i << ")" <<" * other(" << i << "," << row << ")" << std::endl;
+                    // std::cout << "\t [^...] = " << index({col, i}) << "*" << t.index({i, row}) << "=" << index({col, i}) * t.index({i, row}) << std::endl;
+
                     val += data_[col_off + i] * t.data_[(i * cols) + col];
                 }
 
-                data_[col_off + col] = val;
+                out.data_[col_off + col] = val;
             }
         }
 
@@ -221,7 +228,8 @@ public:
 
 
     NTensor<T> strassen_matmul(NTensor<T> A, NTensor<T> B) {
-        if (A.size_ <= 4 && B.size_ <= 4) {
+        if (A.shape_[0] <= 4 && B.shape_[1] <= 4) {
+            _log::log_message(_log::DEBUG, "Static within strassen!"); 
             return A.static_matmul(B);
         }
 
@@ -284,16 +292,17 @@ public:
         const size_t R = c11.shape_[0];
         const size_t C = c11.shape_[1];
 
-        const size_t C2 = 2 * C;
+
         const size_t R2 = 2 * R;
+        const size_t C2 = 2 * C;
 
-        NTensor<T> out({R2, C2}, (T)0, config_);
+        NTensor<T> out({R2, C2}, T(0), config_);
 
-        T* __restrict outp = out.data_.data();
-        const T* __restrict p11 = c11.data_.data();
-        const T* __restrict p12 = c12.data_.data();
-        const T* __restrict p21 = c21.data_.data();
-        const T* __restrict p22 = c22.data_.data();
+        T* outp       = out.data_.data();
+        const T* p11  = c11.data_.data();
+        const T* p12  = c12.data_.data();
+        const T* p21  = c21.data_.data();
+        const T* p22  = c22.data_.data();
 
         for (size_t i = 0; i < R; ++i) {
             T* out_top    = outp + i * C2;
@@ -305,16 +314,16 @@ public:
             const T* d = p22 + i * C;
 
             for (size_t j = 0; j < C; ++j) {
-                out_top[j]     = a[j];
-                out_top[j + C] = b[j];
-            }
-
-            for (size_t j = 0; j < C; ++j) {
+                out_top[j]       = a[j];
+                out_top[j + C]   = b[j];
                 out_bottom[j]     = c[j];
                 out_bottom[j + C] = d[j];
             }
         }
+
+        return out;
     }
+
 
     std::tuple<VTensor<T>, VTensor<T>, VTensor<T>, VTensor<T>> strassen_split(NTensor<T> t){
         size_t rows = t.shape_[0];
@@ -341,8 +350,8 @@ public:
     }
 
     T sum() { 
-        T out;
-        for (size_t i = 0; i < size_; i++) {
+        T out = 0;
+        for (size_t i = 0; i < size_; ++i) {
             out += data_[i];
         }
         return out;
@@ -358,7 +367,7 @@ public:
     T min() {
         T out = data_[0];
 
-        for (size_t i = 1; i < size_; i++) {
+        for (size_t i = 1; i < size_; ++i) {
             out = (data_[i] < out) ? data_[i] : out;
         }
 
@@ -368,7 +377,7 @@ public:
     T max() {
         T out = data_[0];
 
-        for (size_t i = 1; i < size_; i++) {
+        for (size_t i = 1; i < size_; ++i) {
             out = (data_[i] > out) ? data_[i] : out;
         }
 
@@ -377,7 +386,7 @@ public:
 
     void print_flat() {
         std::cout << "NTensor[size=" << size_ << ", data=";
-        for (size_t i = 0; i < size_; i++) {
+        for (size_t i = 0; i < size_; ++i) {
             std::cout << data_[i];
             if (i != size_) std::cout << ", "; 
         }
