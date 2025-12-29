@@ -8,10 +8,10 @@
 #include <memory>
 
 typedef struct NTensorConfig {
-	size_t strassen_threshold = 48;
+	size_t strassen_threshold = 2;
 } NTensorConfig;
 
-template<typename T>
+template<typename T = float>
 class VTensor {
 public:
     T* data_;
@@ -50,24 +50,26 @@ public:
 template<typename T = float>
 class NTensor {
 public:
-    NTensor(std::initializer_list<size_t> shape, T fill, NTensorConfig cfg) {
+
+    NTensor(const std::vector<size_t>& shape, T fill, NTensorConfig cfg)
+        : shape_(shape), config_(cfg)
+    {
         /**
          * @brief Initialize memory for a tensor object
          *
-         * @param (initalizer_list<size_t>) shape: {highest order of abstraction -> scalar} 
+         * @param (std::vector<size_t>) shape: {highest order of abstraction -> scalar} 
          * @param (T) fill: default value of all scalars 
          * @param (struct NTensorConfig) cfg: configuration settings 
          *     ~ (size_t) strassen_threshold: limit .matmul() uses before switching to strassen's algorithm, default = 48 
         */
-
-        shape_ = shape;
-        config_ = cfg;
-
         calculate_size();
         calculate_stride();
-
         data_.resize(size_, fill);
     }
+
+    NTensor(std::initializer_list<size_t> shape, T fill, NTensorConfig cfg)
+        : NTensor(std::vector<size_t>(shape), fill, cfg)
+    {}
 
     T& index(std::initializer_list<size_t> pos) {
         /**
@@ -126,7 +128,7 @@ public:
     NTensor add(const NTensor& t) {
         check_size_eq(t);
 
-        NTensor<T> out(shape_, 0, config_);
+        NTensor<T> out({shape_}, (T)0, config_);
 
         for (size_t i = 0; i < size_; i++) {
             out.data_[i] = data_[i] + t.data_[i];
@@ -135,7 +137,13 @@ public:
         return out;
     }
 
-    NTensor sub(const NTensor& t) {
+    void add(VTensor<T>& a, VTensor<T>& b) {
+        for (size_t i = 0; i < shape_[0]; i++)
+            for (size_t j = 0; j < shape_[1]; i++)
+                data_[i] = a.index(i, j) + b.index(i, j);
+    }
+
+    NTensor sub(NTensor& t) {
         check_size_eq(t);
 
         NTensor<T> out(shape_, 0, config_);
@@ -146,15 +154,183 @@ public:
 
         return out;
     }
-    
-    NTensor scalar_mult(T scalar) {
-        NTensor<T> out(shape_);
 
+    void sub(VTensor<T>& a, VTensor<T>& b) {
+        for (size_t i = 0; i < shape_[0]; i++)
+            for (size_t j = 0; j < shape_[1]; i++) 
+                index({i, j}) = a.index(i, j) - b.index(i, j);
+    }
+
+    void eq(VTensor<T>& view) {
+        size_t ii, jj = 0;
+
+        for (size_t i = 0; i < view.shape_[0]; ++i) {
+            for (size_t j = 0; j < view.shape_[1]; ++j) {
+                index({ii, jj}) = view.index(i, j);
+                ++jj;
+            }
+            ++ii;
+        }
+    }    
+
+    void matmul(T scalar) {
+        T p = (T)0;
         for (size_t i = 0; i < size_; i++) {
-            out.data_[i] = data_[i] * scalar;
+            p = data_[i];
+            data_[i] = p * scalar;
+        }
+    }
+
+    NTensor<T> matmul(NTensor<T> t) {
+        if (ndim_ == 2) {
+            if (size_ < config_.strassen_threshold) {
+                return static_matmul(t);
+            }
+
+            _log::log_message(_log::DEBUG, "Strassen!");
+            
+            return strassen_matmul(*this, t);
+        }
+
+        // implement for n_ > 2
+    }  
+
+    NTensor<T> static_matmul(NTensor<T> t) {    
+        const size_t* mat_shape_2 = t.shape();
+
+        size_t rows = shape_[1];
+        size_t cols = mat_shape_2[0];
+
+        NTensor<T> out = NTensor({cols, rows}, (T)0, config_);
+
+        for (size_t row = 0; row < rows; row++) {
+            size_t col_off = cols * row;
+            for (size_t col = 0; col < cols; col++) {
+                T val = 0;
+
+                for (size_t i = 0; i < shape_[0]; i++) {
+                    val += data_[col_off + i] * t.data_[(i * cols) + col];
+                }
+
+                data_[col_off + col] = val;
+            }
         }
 
         return out;
+    }
+
+
+    NTensor<T> strassen_matmul(NTensor<T> A, NTensor<T> B) {
+        if (A.size_ <= 4 && B.size_ <= 4) {
+            return A.static_matmul(B);
+        }
+
+        VTensor<T> a, b, c, d, e, f, g, h;
+        
+
+        // split 
+        std::tie(a, b, c, d) = strassen_split(A);
+        std::tie(e, f, g, h) = strassen_split(B);
+
+        NTensor<T> buf1({a.shape_[0], a.shape_[1]}, (T)0, config_);
+        NTensor<T> buf2({a.shape_[0], a.shape_[1]}, (T)0, config_);
+        
+        // m1 = strassen(a + d, e + h) 
+        buf1.add(a, d);
+        buf2.sub(e, h);
+        NTensor<T> m1 = strassen_matmul(buf1, buf2);
+        
+        // m2 = strassen(d, g - e)
+        buf2.eq(d);
+        buf2.sub(g, e);
+        NTensor<T> m2 = strassen_matmul(buf1, buf2);
+
+        // m3 = strassen(a + b, h)
+        buf1.add(a, b);
+        buf2.eq(h);
+        NTensor<T> m3 = strassen_matmul(buf1, buf2);
+        
+        // m4 = strassen(b - d, g + h)
+        buf1.sub(b, d); 
+        buf2.add(g, h);
+        NTensor<T> m4 = strassen_matmul(buf1, buf2);
+        
+        // m5 = strassen(a, f - h)
+        buf1.eq(a);
+        buf2.sub(f, h);
+        NTensor<T> m5 = strassen_matmul(buf1, buf2);
+
+        // m6 = strassen(c + d, e)
+        buf1.add(c, d);
+        buf2.eq(e);
+        NTensor<T> m6 = strassen_matmul(buf1, buf2);
+
+        // m7 = strassen(a - c, e + f)
+        buf1.sub(a, c); 
+        buf2.add(e, f);
+        NTensor<T> m7 = strassen_matmul(buf1, buf2);
+        
+        NTensor<T> c11 = m1.add(m2).sub(m3).add(m4);
+        NTensor<T> c12 = m5.add(m3);
+        NTensor<T> c21 = m6.add(m2);
+        NTensor<T> c22 = m5.add(m1).sub(m6).sub(m7); 
+
+        NTensor<T> C = strassen_stack(c11, c12, c21, c22);
+
+        return C;
+    }
+
+    NTensor<T> strassen_stack(const NTensor<T>& c11, const NTensor<T>& c12, const NTensor<T>& c21, const NTensor<T>& c22) {
+        const size_t R = c11.shape_[0];
+        const size_t C = c11.shape_[1];
+
+        const size_t C2 = 2 * C;
+        const size_t R2 = 2 * R;
+
+        NTensor<T> out({R2, C2}, (T)0, config_);
+
+        T* __restrict outp = out.data_.data();
+        const T* __restrict p11 = c11.data_.data();
+        const T* __restrict p12 = c12.data_.data();
+        const T* __restrict p21 = c21.data_.data();
+        const T* __restrict p22 = c22.data_.data();
+
+        for (size_t i = 0; i < R; ++i) {
+            T* out_top    = outp + i * C2;
+            T* out_bottom = outp + (i + R) * C2;
+
+            const T* a = p11 + i * C;
+            const T* b = p12 + i * C;
+            const T* c = p21 + i * C;
+            const T* d = p22 + i * C;
+
+            for (size_t j = 0; j < C; ++j) {
+                out_top[j]     = a[j];
+                out_top[j + C] = b[j];
+            }
+
+            for (size_t j = 0; j < C; ++j) {
+                out_bottom[j]     = c[j];
+                out_bottom[j + C] = d[j];
+            }
+        }
+    }
+
+    std::tuple<VTensor<T>, VTensor<T>, VTensor<T>, VTensor<T>> strassen_split(NTensor<T> t){
+        size_t rows = t.shape_[0];
+        size_t columns = t.shape_[1];
+
+        size_t half_rows = rows / 2;
+        size_t half_columns = columns / 2;
+
+        // std::cout << half_rows << half_columns << std::endl;
+
+        VTensor<T> a = t.slice(0, half_rows, 0, half_columns);
+        VTensor<T> b = t.slice(0, half_rows, half_columns, columns);
+        VTensor<T> c = t.slice(half_rows, rows, 0, half_columns);
+        VTensor<T> d = t.slice(half_rows, rows, half_columns, columns);
+        
+        return std::tuple<VTensor<T>, VTensor<T>, VTensor<T>, VTensor<T>> {a, b, c, d};
     }
 
     NTensor flatten() {
@@ -206,10 +382,9 @@ public:
             if (i != size_) std::cout << ", "; 
         }
         std::cout << "]" << std::endl;
-     
     }
 
-    T* data() { return data_.data(); }
+    T* data() { return data_.data(); };
     const size_t* shape() { return shape_.data(); };
     size_t ndim() { return ndim_; };
 private:
